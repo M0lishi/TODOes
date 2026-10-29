@@ -2,7 +2,7 @@
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (QAbstractButton, QHBoxLayout, QPlainTextEdit,
-                             QSizePolicy, QVBoxLayout, QPushButton, QWidget)
+                             QSizePolicy, QVBoxLayout, QWidget)
 
 from .model import Task
 
@@ -46,12 +46,12 @@ class RoundCheck(QAbstractButton):
             p.drawPolyline(QPolygonF([QPointF(9, 14.5), QPointF(12.5, 18), QPointF(19, 10.5)]))
         else:
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.setPen(QPen(QColor(60, 60, 67, 110), 1.8))
+            p.setPen(QPen(QColor(60, 60, 67, 200), 2.2))
             p.drawEllipse(r)
 
 
 class IconButton(QAbstractButton):
-    """Плоская кнопка с нарисованной иконкой: plus, close, dots, pin."""
+    """Единый стиль рисованных кнопок управления стикером."""
 
     def __init__(self, kind: str, tooltip: str = "", checkable: bool = False,
                  size: int = 30, parent=None):
@@ -64,6 +64,10 @@ class IconButton(QAbstractButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
+    def set_kind(self, kind):
+        self._kind = kind
+        self.update()
+
     def enterEvent(self, e):
         self._hover = True
         self.update()
@@ -75,13 +79,13 @@ class IconButton(QAbstractButton):
     def paintEvent(self, _):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        ink = QColor(28, 28, 30, 170)
+        ink = QColor("#1C1C1E")
         if self._hover:
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(0, 0, 0, 22))
             p.drawEllipse(self.rect().adjusted(1, 1, -1, -1))
         cx, cy = self.width() / 2, self.height() / 2
-        pen = QPen(ink, 1.8)
+        pen = QPen(ink, 2.3)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         k = self._kind
         if k == "plus":
@@ -93,15 +97,33 @@ class IconButton(QAbstractButton):
             p.setPen(pen)
             p.drawLine(QPointF(cx - d, cy - d), QPointF(cx + d, cy + d))
             p.drawLine(QPointF(cx - d, cy + d), QPointF(cx + d, cy - d))
-        elif k == "dots":
+        elif k in ("collapse", "expand", "description"):
+            p.setPen(pen)
+            if k == "description":
+                for dy in (-4, 0, 4):
+                    p.drawLine(QPointF(cx - 5, cy + dy), QPointF(cx + 5, cy + dy))
+            else:
+                direction = 1 if k == "expand" else -1
+                p.drawPolyline(QPolygonF([QPointF(cx - 5, cy - direction * 2),
+                                          QPointF(cx, cy + direction * 3),
+                                          QPointF(cx + 5, cy - direction * 2)]))
+        elif k == "color":
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QRectF(cx - 7, cy - 7, 14, 14))
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(ink)
-            for dx in (-6, 0, 6):
-                p.drawEllipse(QPointF(cx + dx, cy), 1.9, 1.9)
+            for dx, dy in ((-3, -2), (3, -2), (0, 3)):
+                p.drawEllipse(QPointF(cx + dx, cy + dy), 1.5, 1.5)
+        elif k == "delete":
+            p.setPen(pen)
+            p.drawLine(QPointF(cx - 6, cy - 5), QPointF(cx + 6, cy - 5))
+            p.drawLine(QPointF(cx - 2, cy - 8), QPointF(cx + 2, cy - 8))
+            p.drawRoundedRect(QRectF(cx - 4, cy - 3, 8, 10), 1, 1)
         elif k == "pin":
             active = self.isChecked()
             col = QColor("#007AFF") if active else ink
-            pen = QPen(col, 1.8)
+            pen = QPen(col, 2.3)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
             p.translate(cx, cy)
             p.rotate(40)
@@ -176,9 +198,7 @@ class TaskRow(QWidget):
 
         lay.addWidget(self.check)
         lay.addWidget(self.edit, 1)
-        self.description_btn = QPushButton("≡")
-        self.description_btn.setToolTip("Описание задачи")
-        self.description_btn.setFixedSize(24, 28)
+        self.description_btn = IconButton("description", "Описание задачи", size=28)
         lay.addWidget(self.description_btn)
         lay.addWidget(self.remove_btn)
         self.description = GrowingTextEdit(task.description)

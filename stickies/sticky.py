@@ -94,6 +94,7 @@ class StickyWindow(QWidget):
         self.rows: list[TaskRow] = []
         self._animating = False
         self._expanded_height = note.h
+        self._expanded_width = note.w
         self._restoring = True
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowTitle(note.title or "Стикер")
@@ -173,18 +174,11 @@ class StickyWindow(QWidget):
         new_btn = IconButton("plus", "Новый стикер (Ctrl+N)")
         self.pin_btn = IconButton("pin", "Закрепить поверх окон", checkable=True)
         self.pin_btn.setChecked(self.note.pinned)
-        more_btn = IconButton("dots", "Ещё")
-        self.collapse_btn = QPushButton("−")
-        self.collapse_btn.setToolTip("Свернуть до шапки / развернуть")
-        self.collapse_btn.setFixedSize(26, 28)
+        self.collapse_btn = IconButton("collapse", "Свернуть до шапки / развернуть")
         self.collapse_btn.clicked.connect(lambda: self.set_collapsed(not self.note.collapsed))
-        self.color_btn = QPushButton("●")
-        self.color_btn.setToolTip("Цвет стикера")
-        self.color_btn.setFixedSize(26, 28)
+        self.color_btn = IconButton("color", "Цвет стикера")
         self.color_btn.clicked.connect(self._show_colors)
-        self.delete_btn = QPushButton("⌫")
-        self.delete_btn.setToolTip("Удалить стикер")
-        self.delete_btn.setFixedSize(26, 28)
+        self.delete_btn = IconButton("delete", "Удалить стикер")
         self.delete_btn.clicked.connect(lambda: self.deleteRequested.emit(self))
         self.hide_btn = IconButton("close", "Скрыть стикер в трей")
         self.hide_btn.clicked.connect(lambda: self.hideRequested.emit(self))
@@ -195,11 +189,9 @@ class StickyWindow(QWidget):
         hl.addWidget(self.delete_btn)
         hl.addWidget(self.hide_btn)
         hl.addWidget(self.pin_btn)
-        hl.addWidget(more_btn)
         lay.addWidget(self.header)
         new_btn.clicked.connect(self.newRequested.emit)
         self.pin_btn.toggled.connect(self._set_pinned)
-        more_btn.clicked.connect(lambda: self._show_menu(more_btn))
 
         self.body = QWidget()
         lay.addWidget(self.body, 1)
@@ -255,6 +247,9 @@ class StickyWindow(QWidget):
         foot.addWidget(QSizeGrip(self.card), 0, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignLeft)
         foot.addWidget(self.tag_chip)
         foot.addWidget(self.due_chip)
+        self.clear_btn = IconButton("delete", "Убрать выполненные задачи")
+        self.clear_btn.clicked.connect(self._clear_done)
+        foot.addWidget(self.clear_btn)
         foot.addStretch()
         foot.addWidget(QSizeGrip(self.card), 0,
                        Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignRight)
@@ -268,21 +263,22 @@ class StickyWindow(QWidget):
         QPushButton {{ background: transparent; border: none; }}
         QPushButton:hover {{ background: rgba(255,255,255,70%); border-radius: 6px; }}
         QLineEdit {{ selection-background-color: {pal.accent}; }}
+        #collapsedTitle {{ color: {INK}; font-size: 15px; font-weight: 700; }}
         #title {{ background: transparent; border: none; color: {INK};
                   font-size: 21px; font-weight: 700; padding: 2px 0; }}
         #task {{ background: transparent; border: none; color: {INK};
-                 font-size: 15px; }}
-        #description {{ background: rgba(255,255,255,35%); border: none; border-radius: 6px; color: {INK_SECONDARY}; font-size: 13px; padding: 4px; }}
-        #task[done="true"] {{ color: rgba(60, 60, 67, 45%); }}
+                 font-size: 15px; font-weight: 600; }}
+        #description {{ background: rgba(255,255,255,35%); border: none; border-radius: 6px; color: {INK}; font-size: 14px; font-weight: 500; padding: 4px; }}
+        #task[done="true"] {{ color: rgba(60, 60, 67, 70%); }}
         #add {{ background: rgba(255, 255, 255, 55%); border: none;
                 border-radius: 10px; padding: 0 12px; color: {INK};
-                font-size: 14px; }}
+                font-size: 14px; font-weight: 600; }}
         #add:focus {{ background: rgba(255, 255, 255, 85%); }}
         #chip {{ background: rgba(255, 255, 255, 60%); border: none;
-                 border-radius: 12px; padding: 5px 11px; color: {INK_SECONDARY};
-                 font-size: 12px; font-weight: 600; }}
+                 border-radius: 12px; padding: 5px 11px; color: {INK};
+                 font-size: 13px; font-weight: 600; }}
         #chip:hover {{ background: rgba(255, 255, 255, 88%); }}
-        #chip[tone="empty"] {{ font-weight: 500; }}
+        #chip[tone="empty"] {{ font-weight: 600; }}
         #chip[tone="warn"] {{ color: {IOS_ORANGE}; }}
         #chip[tone="danger"] {{ color: {IOS_RED}; }}
         QScrollArea, #list {{ background: transparent; border: none; }}
@@ -409,40 +405,30 @@ class StickyWindow(QWidget):
             self._height_animation.stop()
         if collapsed and not self.note.collapsed:
             self._expanded_height = self.height()
+            self._expanded_width = self.width()
         self._animating = True
         self.note.collapsed = collapsed
         self.body.setVisible(not collapsed)
         self.collapsed_title.setVisible(collapsed)
-        self.collapse_btn.setText("+" if collapsed else "−")
+        self.collapse_btn.set_kind("expand" if collapsed else "collapse")
         self.collapse_btn.setToolTip((self.note.title or "Стикер") + " — развернуть" if collapsed else "Свернуть до шапки")
-        self.setMinimumHeight(104 if collapsed else 230)
-        target = 104 if collapsed else self._expanded_height
+        self.setMinimumSize(260 if collapsed else 300, 104 if collapsed else 230)
+        target = QSize(260, 104) if collapsed else QSize(self._expanded_width, self._expanded_height)
         if animate and self.isVisible():
             self._height_animation = QPropertyAnimation(self, b"size", self)
             self._height_animation.setDuration(180)
             self._height_animation.setStartValue(self.size())
-            self._height_animation.setEndValue(QSize(self.width(), target))
+            self._height_animation.setEndValue(target)
             self._height_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self._height_animation.finished.connect(self._animation_done)
             self._height_animation.start()
         else:
-            self.resize(self.width(), target)
+            self.resize(target)
             self._animation_done()
         self.changed.emit()
 
     def _animation_done(self):
         self._animating = False
-
-    def _show_menu(self, anchor: QWidget) -> None:
-        menu = QMenu(self)
-        menu.addAction("Тег…", self._edit_tag)
-        menu.addAction("Срок…", self._edit_deadline)
-        menu.addSeparator()
-        clear = menu.addAction("Убрать выполненные", self._clear_done)
-        clear.setEnabled(any(r.check.isChecked() for r in self.rows))
-        menu.addSeparator()
-        menu.addAction("Выйти из приложения", self.quitRequested.emit)
-        menu.exec(anchor.mapToGlobal(anchor.rect().bottomLeft()))
 
     def _set_color(self, key: str) -> None:
         self.note.color = key
@@ -466,8 +452,9 @@ class StickyWindow(QWidget):
         super().moveEvent(e)
 
     def resizeEvent(self, e):
-        self.note.w = self.width()
         if not self.note.collapsed and not self._animating and not self._restoring:
+            self.note.w = self.width()
+            self._expanded_width = self.width()
             self.note.h = self.height()
             self._expanded_height = self.height()
         self.changed.emit()
