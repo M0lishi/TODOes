@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, QPointF, Qt
 from PyQt6.QtWidgets import QApplication, QMenu, QSizeGrip
 from PyQt6.QtTest import QTest
 
@@ -88,7 +88,14 @@ class StickiesTests(unittest.TestCase):
         self.assertLess(win.height(), 150)
         self.assertEqual(note.h, 650)
         self.assertEqual(note.w, 800)
-        self.assertEqual(win.width(), 260)
+        self.assertEqual(win.width(), 200)
+        self.assertEqual(win.geometry().bottomRight(), win.screen().availableGeometry().bottomRight())
+        original_position = (note.x, note.y)
+        win.move(win.x() - 100, win.y() - 50)
+        APP.processEvents()
+        self.assertEqual((note.x, note.y), original_position)
+        self.assertTrue(win.header.isHidden())
+        self.assertFalse(win.compact_header.isHidden())
         self.store.save([note])
         restored = self.window(self.store.load()[0])
         self.assertTrue(restored.note.collapsed)
@@ -105,7 +112,7 @@ class StickiesTests(unittest.TestCase):
         win.set_collapsed(True)
         QTest.qWait(250)
         self.assertLess(win.height(), 150)
-        self.assertEqual(win.width(), 260)
+        self.assertEqual(win.width(), 200)
         win.set_collapsed(False)
         QTest.qWait(250)
         self.assertEqual(win.size(), original)
@@ -115,6 +122,29 @@ class StickiesTests(unittest.TestCase):
         win.show_animated()
         QTest.qWait(200)
         self.assertTrue(win.isVisible())
+
+    def test_compact_header_drag_and_expanded_position(self):
+        win = self.window()
+        win.move(80, 90)
+        APP.processEvents()
+        expanded_position = win.pos()
+        win.set_collapsed(True, animate=False)
+        initial = win.pos()
+        event = MagicMock()
+        event.button.return_value = Qt.MouseButton.LeftButton
+        event.buttons.return_value = Qt.MouseButton.LeftButton
+        event.globalPosition.return_value = QPointF(initial.x() + 15, initial.y() + 15)
+        with patch.object(win, 'windowHandle', return_value=None):
+            win.compact_header.mousePressEvent(event)
+        event.globalPosition.return_value = QPointF(initial.x() - 25, initial.y() - 35)
+        win.compact_header.mouseMoveEvent(event)
+        APP.processEvents()
+        self.assertEqual(win.x(), initial.x() - 40)
+        self.assertEqual(win.y(), initial.y() - 50)
+        win.set_collapsed(False, animate=False)
+        self.assertEqual(win.pos(), expanded_position)
+        win.set_collapsed(True, animate=False)
+        self.assertEqual(win.geometry().bottomRight(), win.screen().availableGeometry().bottomRight())
 
     def test_tray_menu_targets_and_refreshes_titles(self):
         with patch('stickies.app.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):

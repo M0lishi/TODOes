@@ -107,6 +107,11 @@ class IconButton(QAbstractButton):
                 p.drawPolyline(QPolygonF([QPointF(cx - 5, cy - direction * 2),
                                           QPointF(cx, cy + direction * 3),
                                           QPointF(cx + 5, cy - direction * 2)]))
+        elif k == "dots":
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(ink)
+            for dx in (-5, 0, 5):
+                p.drawEllipse(QPointF(cx + dx, cy), 1.6, 1.6)
         elif k == "color":
             p.setPen(pen)
             p.setBrush(Qt.BrushStyle.NoBrush)

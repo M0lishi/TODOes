@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from PyQt6.QtCore import QDate, QSize, Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal
+from PyQt6.QtCore import QDate, QRect, QSize, Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QKeySequence, QPixmap, QPainter, QShortcut
 from PyQt6.QtWidgets import (QCalendarWidget, QDialog, QFrame,
                              QGraphicsDropShadowEffect, QHBoxLayout,
@@ -37,9 +37,21 @@ class DragHeader(QWidget):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = e.globalPosition().toPoint() - self.window().pos()
             handle = self.window().windowHandle()
-            if handle:
-                handle.startSystemMove()
+            if handle and handle.startSystemMove():
+                self._drag_offset = None
+            e.accept()
+
+    def mouseMoveEvent(self, e):
+        offset = getattr(self, "_drag_offset", None)
+        if offset is not None and e.buttons() & Qt.MouseButton.LeftButton:
+            self.window().move(e.globalPosition().toPoint() - offset)
+            e.accept()
+
+    def mouseReleaseEvent(self, e):
+        self._drag_offset = None
+        super().mouseReleaseEvent(e)
 
 
 class DeadlineDialog(QDialog):
@@ -95,6 +107,7 @@ class StickyWindow(QWidget):
         self._animating = False
         self._expanded_height = note.h
         self._expanded_width = note.w
+        self._expanded_position = self.pos()
         self._restoring = True
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setWindowTitle(note.title or "Стикер")
@@ -106,6 +119,7 @@ class StickyWindow(QWidget):
         self._refresh_chips()
         self.resize(note.w, note.h)
         self.move(note.x, note.y)
+        self._expanded_position = self.pos()
         self._restoring = False
         if note.collapsed:
             self.set_collapsed(True, animate=False)
@@ -159,13 +173,22 @@ class StickyWindow(QWidget):
         lay.setSpacing(6)
 
         # шапка
+        self.compact_header = DragHeader()
+        compact_layout = QHBoxLayout(self.compact_header)
+        compact_layout.setContentsMargins(0, 0, 0, 0)
+        compact_layout.setSpacing(4)
         self.collapsed_title = QLabel(self.note.title or "Стикер")
         self.collapsed_title.setObjectName("collapsedTitle")
         self.collapsed_title.setWordWrap(False)
         self.collapsed_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.collapsed_title.setToolTip(self.note.title or "Стикер")
-        self.collapsed_title.setVisible(False)
-        lay.addWidget(self.collapsed_title)
+        self.collapsed_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        compact_layout.addWidget(self.collapsed_title, 1)
+        self.compact_menu_btn = IconButton("dots", "Управление стикером")
+        self.compact_menu_btn.clicked.connect(self._show_compact_menu)
+        compact_layout.addWidget(self.compact_menu_btn)
+        self.compact_header.setVisible(False)
+        lay.addWidget(self.compact_header)
         self.header = DragHeader()
         self.header.setFixedHeight(34)
         hl = QHBoxLayout(self.header)
@@ -406,29 +429,51 @@ class StickyWindow(QWidget):
         if collapsed and not self.note.collapsed:
             self._expanded_height = self.height()
             self._expanded_width = self.width()
+            self._expanded_position = self.pos()
         self._animating = True
         self.note.collapsed = collapsed
         self.body.setVisible(not collapsed)
-        self.collapsed_title.setVisible(collapsed)
+        self.compact_header.setVisible(collapsed)
+        self.header.setVisible(not collapsed)
         self.collapse_btn.set_kind("expand" if collapsed else "collapse")
         self.collapse_btn.setToolTip((self.note.title or "Стикер") + " — развернуть" if collapsed else "Свернуть до шапки")
-        self.setMinimumSize(260 if collapsed else 300, 104 if collapsed else 230)
-        target = QSize(260, 104) if collapsed else QSize(self._expanded_width, self._expanded_height)
+        self.setMinimumSize(200 if collapsed else 300, 74 if collapsed else 230)
+        if collapsed:
+            area = self.screen().availableGeometry()
+            target = QRect(area.right() - 200 + 1, area.bottom() - 74 + 1, 200, 74)
+        else:
+            target = QRect(self._expanded_position, QSize(self._expanded_width, self._expanded_height))
         if animate and self.isVisible():
-            self._height_animation = QPropertyAnimation(self, b"size", self)
+            self._height_animation = QPropertyAnimation(self, b"geometry", self)
             self._height_animation.setDuration(180)
-            self._height_animation.setStartValue(self.size())
+            self._height_animation.setStartValue(self.geometry())
             self._height_animation.setEndValue(target)
             self._height_animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
             self._height_animation.finished.connect(self._animation_done)
             self._height_animation.start()
         else:
-            self.resize(target)
+            self.setGeometry(target)
             self._animation_done()
         self.changed.emit()
 
     def _animation_done(self):
         self._animating = False
+
+    def _show_compact_menu(self):
+        menu = QMenu(self)
+        menu.addAction("Развернуть", lambda: self.set_collapsed(False))
+        menu.addAction("Новый стикер", self.newRequested.emit)
+        pin = menu.addAction("Поверх всех окон")
+        pin.setCheckable(True)
+        pin.setChecked(self.note.pinned)
+        pin.triggered.connect(self.pin_btn.setChecked)
+        colors = menu.addMenu("Цвет")
+        for pal in PALETTES:
+            action = colors.addAction(color_icon(pal.bg), pal.title)
+            action.triggered.connect(lambda _=False, key=pal.key: self._set_color(key))
+        menu.addAction("Скрыть в трей", lambda: self.hideRequested.emit(self))
+        menu.addAction("Удалить стикер", lambda: self.deleteRequested.emit(self))
+        menu.exec(self.compact_menu_btn.mapToGlobal(self.compact_menu_btn.rect().bottomLeft()))
 
     def _set_color(self, key: str) -> None:
         self.note.color = key
@@ -447,7 +492,9 @@ class StickyWindow(QWidget):
 
     # ---------- геометрия ----------
     def moveEvent(self, e):
-        self.note.x, self.note.y = self.x(), self.y()
+        if not self.note.collapsed and not self._animating and not self._restoring:
+            self.note.x, self.note.y = self.x(), self.y()
+            self._expanded_position = self.pos()
         self.changed.emit()
         super().moveEvent(e)
 
