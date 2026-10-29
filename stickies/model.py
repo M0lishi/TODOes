@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 class Task:
     text: str = ""
     done: bool = False
+    description: str = ""
 
 
 @dataclass
@@ -21,6 +22,7 @@ class Note:
     tasks: list[Task] = field(default_factory=list)
     tag: str = ""
     deadline: str | None = None  # ISO-дата, например "2026-11-03"
+    collapsed: bool = False
     pinned: bool = False
     x: int = 120
     y: int = 120
@@ -34,8 +36,8 @@ class Note:
     def to_dict(self) -> dict:
         return {
             "id": self.id, "color": self.color, "title": self.title,
-            "tasks": [{"text": t.text, "done": t.done} for t in self.tasks],
-            "tag": self.tag, "deadline": self.deadline, "pinned": self.pinned,
+            "tasks": [{"text": t.text, "done": t.done, "description": t.description} for t in self.tasks],
+            "tag": self.tag, "deadline": self.deadline, "pinned": self.pinned, "collapsed": self.collapsed,
             "x": self.x, "y": self.y, "w": self.w, "h": self.h,
         }
 
@@ -45,10 +47,12 @@ class Note:
             id=str(d.get("id") or uuid.uuid4().hex),
             color=d.get("color", "yellow"),
             title=d.get("title", ""),
-            tasks=[Task(str(t.get("text", "")), bool(t.get("done", False)))
+            tasks=[Task(str(t.get("text", "")), bool(t.get("done", False)),
+                        str(t.get("description", "")))
                    for t in d.get("tasks", [])],
             tag=d.get("tag", ""),
             deadline=d.get("deadline"),
+            collapsed=bool(d.get("collapsed", False)),
             pinned=bool(d.get("pinned", False)),
             x=int(d.get("x", 120)), y=int(d.get("y", 120)),
             w=int(d.get("w", 300)), h=int(d.get("h", 340)),

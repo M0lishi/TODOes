@@ -1,8 +1,8 @@
 """Мелкие виджеты: круглый чекбокс, иконки-кнопки, строка задачи."""
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF
-from PyQt6.QtWidgets import (QAbstractButton, QHBoxLayout, QLineEdit,
-                             QSizePolicy, QWidget)
+from PyQt6.QtWidgets import (QAbstractButton, QHBoxLayout, QPlainTextEdit,
+                             QSizePolicy, QVBoxLayout, QPushButton, QWidget)
 
 from .model import Task
 
@@ -111,54 +111,97 @@ class IconButton(QAbstractButton):
             p.drawLine(QPointF(0, 2), QPointF(0, 8))
 
 
+class GrowingTextEdit(QPlainTextEdit):
+    """Редактор, высота которого следует за переносами строк."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(parent)
+        self.setPlainText(text)
+        self.setFrameStyle(0)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.textChanged.connect(self._fit)
+        self.document().documentLayout().documentSizeChanged.connect(self._fit)
+        self._fit()
+
+    def _fit(self, *_):
+        block = self.document().firstBlock()
+        height = 0
+        while block.isValid():
+            height += self.blockBoundingRect(block).height()
+            block = block.next()
+        margins = self.contentsMargins()
+        height += 2 * self.document().documentMargin() + margins.top() + margins.bottom()
+        self.setFixedHeight(max(32, int(height + 2)))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()
+
+    def text(self):
+        return self.toPlainText()
+
+    def setText(self, text):
+        self.setPlainText(text)
+
+
 class TaskRow(QWidget):
-    """Одна задача: отметка, текст и кнопка удаления при наведении."""
+    """Задача с переносом текста, описанием и явными кнопками управления."""
 
     changed = pyqtSignal()
     removeRequested = pyqtSignal(object)
 
     def __init__(self, task: Task, accent: str, parent=None):
         super().__init__(parent)
-        lay = QHBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 6)
+        root.setSpacing(2)
+        lay = QHBoxLayout()
+        root.addLayout(lay)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(4)
 
         self.check = RoundCheck(accent)
         self.check.setChecked(task.done)
-        self.edit = QLineEdit(task.text)
+        self.edit = GrowingTextEdit(task.text)
         self.edit.setObjectName("task")
         self.edit.setPlaceholderText("Задача")
-        self.edit.setCursorPosition(0)  # длинный текст показываем с начала
         self.edit.setMinimumHeight(28)
         self.remove_btn = IconButton("close", "Удалить задачу", size=24)
         sp = self.remove_btn.sizePolicy()
         sp.setRetainSizeWhenHidden(True)
         self.remove_btn.setSizePolicy(sp)
-        self.remove_btn.setVisible(False)
+        self.remove_btn.setVisible(True)
 
         lay.addWidget(self.check)
         lay.addWidget(self.edit, 1)
+        self.description_btn = QPushButton("≡")
+        self.description_btn.setToolTip("Описание задачи")
+        self.description_btn.setFixedSize(24, 28)
+        lay.addWidget(self.description_btn)
         lay.addWidget(self.remove_btn)
+        self.description = GrowingTextEdit(task.description)
+        self.description.setObjectName("description")
+        self.description.setPlaceholderText("Описание задачи…")
+        self.description.setVisible(bool(task.description))
+        root.addWidget(self.description)
+        self.description_btn.clicked.connect(self._toggle_description)
+        self.description.textChanged.connect(self.changed.emit)
 
         self.check.toggled.connect(self._on_toggle)
-        self.edit.textEdited.connect(lambda _: self.changed.emit())
-        self.edit.editingFinished.connect(self._finish)
+        self.edit.textChanged.connect(self.changed.emit)
         self.remove_btn.clicked.connect(lambda: self.removeRequested.emit(self))
         self._apply_done(task.done)
 
-    def enterEvent(self, e):
-        self.remove_btn.setVisible(True)
-
-    def leaveEvent(self, e):
-        self.remove_btn.setVisible(False)
+    def _toggle_description(self):
+        self.description.setVisible(self.description.isHidden())
+        if not self.description.isHidden():
+            self.description.setFocus()
 
     def _on_toggle(self, done: bool) -> None:
         self._apply_done(done)
         self.changed.emit()
-
-    def _finish(self) -> None:
-        if not self.edit.text().strip():
-            self.removeRequested.emit(self)
 
     def _apply_done(self, done: bool) -> None:
         f = self.edit.font()
@@ -171,4 +214,4 @@ class TaskRow(QWidget):
         self.check.set_accent(color)
 
     def task(self) -> Task:
-        return Task(self.edit.text(), self.check.isChecked())
+        return Task(self.edit.text(), self.check.isChecked(), self.description.text())

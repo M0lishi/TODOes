@@ -3,36 +3,36 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
+from PyQt6.QtSvg import QSvgRenderer
 
-from PyQt6.QtCore import QObject, QPoint, QStandardPaths, QTimer
+from PyQt6.QtCore import QObject, QPoint, QStandardPaths, QTimer, Qt
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (QApplication, QMenu, QMessageBox,
                              QSystemTrayIcon)
 
+from . import startup
 from .model import Note, Store, Task
 from .sticky import StickyWindow
 from .theme import FONT_FAMILIES, PALETTES
 
 
 def app_icon() -> QIcon:
+    root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    renderer = QSvgRenderer(str(root / "assets" / "todoes.svg"))
     pm = QPixmap(64, 64)
-    pm.fill(QColor(0, 0, 0, 0))
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setPen(QColor(0, 0, 0, 40))
-    p.setBrush(QColor(PALETTES[0].bg))
-    p.drawRoundedRect(6, 6, 52, 52, 12, 12)
-    p.setPen(QColor(229, 184, 0))
-    for y in (24, 34, 44):
-        p.drawLine(16, y, 48 if y != 44 else 34, y)
-    p.end()
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    renderer.render(painter)
+    painter.end()
     return QIcon(pm)
 
 
 class Manager(QObject):
-    def __init__(self, store: Store):
+    def __init__(self, store: Store, start_in_tray: bool = False):
         super().__init__()
         self.store = store
+        self.start_in_tray = start_in_tray and QSystemTrayIcon.isSystemTrayAvailable()
         self.windows: dict[str, StickyWindow] = {}
         self.save_timer = QTimer(self)
         self.save_timer.setSingleShot(True)
@@ -51,7 +51,7 @@ class Manager(QObject):
         n.tasks = [
             Task("Нажми на кружок, чтобы отметить задачу"),
             Task("Тяни стикер за верхнюю полосу"),
-            Task("В меню ⋯ — цвет, тег и срок"),
+            Task("Кнопка ≡ у задачи открывает описание"),
         ]
         return n
 
@@ -65,8 +65,10 @@ class Manager(QObject):
         w.newRequested.connect(lambda w=w: self.new_note(near=w))
         w.deleteRequested.connect(self.delete)
         w.quitRequested.connect(self.quit)
+        w.hideRequested.connect(self.hide_note)
         self.windows[note.id] = w
-        w.show()
+        if not self.start_in_tray:
+            w.show_animated()
         return w
 
     def new_note(self, near: StickyWindow | None = None) -> None:
@@ -77,6 +79,7 @@ class Manager(QObject):
             geo = QGuiApplication.primaryScreen().availableGeometry()
             x, y = geo.x() + 120, geo.y() + 120
         w = self.open(Note.new(color, x, y))
+        w.show_animated()
         w.title.setFocus()
         self.save()
 
@@ -92,15 +95,25 @@ class Manager(QObject):
         if len(self.windows) == 1:  # приложение не должно остаться без окон
             self.new_note()
         self.windows.pop(note.id, None)
-        win.close()
-        win.deleteLater()
+        win.hide_animated(win.deleteLater)
         self.save()
+
+    def hide_note(self, win: StickyWindow) -> None:
+        if self.tray is None:
+            win.showMinimized()
+        else:
+            win.hide_animated()
+        self.save()
+
+    def show_note(self, win: StickyWindow) -> None:
+        win.showNormal()
+        win.show_animated()
+        win.raise_()
+        win.activateWindow()
 
     def show_all(self) -> None:
         for w in self.windows.values():
-            w.show()
-            w.raise_()
-            w.activateWindow()
+            self.show_note(w)
 
     def save(self) -> None:
         self.store.save([w.note for w in self.windows.values()])
@@ -109,6 +122,19 @@ class Manager(QObject):
         self.save()
         QApplication.quit()
 
+    def _fill_notes_menu(self, menu: QMenu):
+        menu.clear()
+        for win in self.windows.values():
+            action = menu.addAction(win.note.title.strip() or "Без названия")
+            action.triggered.connect(lambda _=False, w=win: self.show_note(w))
+
+    def _set_startup(self, action, checked):
+        try:
+            startup.set_enabled(checked)
+        except OSError as error:
+            action.setChecked(startup.enabled())
+            QMessageBox.warning(None, "Автозапуск", str(error))
+
     def _make_tray(self) -> QSystemTrayIcon | None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return None
@@ -116,10 +142,20 @@ class Manager(QObject):
         menu = QMenu()
         menu.addAction("Новый стикер", self.new_note)
         menu.addAction("Показать все", self.show_all)
+        notes_menu = menu.addMenu("Стикеры")
+        notes_menu.aboutToShow.connect(lambda: self._fill_notes_menu(notes_menu))
+        if startup.supported():
+            auto = menu.addAction("Запускать с Windows (в трей)")
+            auto.setCheckable(True)
+            auto.setChecked(startup.enabled())
+            auto.triggered.connect(lambda checked: self._set_startup(auto, checked))
         menu.addSeparator()
         menu.addAction("Выйти", self.quit)
         tray.setContextMenu(menu)
-        tray.activated.connect(lambda _: self.show_all())
+        tray.activated.connect(
+            lambda reason: self.show_all()
+            if reason == QSystemTrayIcon.ActivationReason.DoubleClick else None
+        )
         tray.setToolTip("Стикеры")
         tray.show()
         # с треем закрытие всех окон не завершает приложение
@@ -139,6 +175,6 @@ def run() -> int:
     app.setFont(font)
 
     data_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
-    manager = Manager(Store(os.path.join(data_dir, "notes.json")))
+    manager = Manager(Store(os.path.join(data_dir, "notes.json")), start_in_tray="--tray" in sys.argv)
     app.aboutToQuit.connect(manager.save)
     return app.exec()
