@@ -44,6 +44,15 @@ class DragHeader(QWidget):
                 self._drag_offset = None
             e.accept()
 
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = None
+            window = self.window()
+            window.set_collapsed(not window.note.collapsed)
+            e.accept()
+        else:
+            super().mouseDoubleClickEvent(e)
+
     def mouseMoveEvent(self, e):
         offset = getattr(self, "_drag_offset", None)
         if offset is not None and e.buttons() & Qt.MouseButton.LeftButton:

@@ -147,6 +147,22 @@ class StickiesTests(unittest.TestCase):
         win.set_collapsed(True, animate=False)
         self.assertEqual(win.geometry().bottomRight(), win.screen().availableGeometry().bottomRight())
 
+    def test_header_double_click_toggles_collapse(self):
+        win = self.window()
+        win.resize(650, 550)
+        APP.processEvents()
+        original = win.geometry()
+        QTest.mouseDClick(win.header, Qt.MouseButton.LeftButton)
+        QTest.qWait(250)
+        self.assertTrue(win.note.collapsed)
+        self.assertTrue(win.compact_header.isVisible())
+        QTest.mouseDClick(win.compact_header, Qt.MouseButton.RightButton)
+        self.assertTrue(win.note.collapsed)
+        QTest.mouseDClick(win.compact_header, Qt.MouseButton.LeftButton)
+        QTest.qWait(250)
+        self.assertFalse(win.note.collapsed)
+        self.assertEqual(win.geometry(), original)
+
     def test_tab_slots_wrap_without_overlapping(self):
         area = QRect(-640, 30, 640, 400)
         slots = []
