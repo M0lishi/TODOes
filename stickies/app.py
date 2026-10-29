@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QApplication, QMenu, QMessageBox,
                              QSystemTrayIcon)
 
 from . import startup
+from .docking import compact_slot
 from .model import Note, Store, Task
 from .sticky import StickyWindow
 from .theme import FONT_FAMILIES, PALETTES
@@ -67,9 +68,21 @@ class Manager(QObject):
         w.quitRequested.connect(self.quit)
         w.hideRequested.connect(self.hide_note)
         self.windows[note.id] = w
+        w.compact_target_provider = lambda: self._compact_target(w)
+        if note.collapsed:
+            w.set_collapsed(True, animate=False)
         if not self.start_in_tray:
             w.show_animated()
         return w
+
+    def _compact_target(self, win):
+        occupied = []
+        for other in self.windows.values():
+            if other is win or not other.note.collapsed or other.screen() != win.screen():
+                continue
+            occupied.append(other._dock_target if other._animating and other._dock_target is not None
+                            else other.geometry())
+        return compact_slot(win.screen().availableGeometry(), occupied)
 
     def new_note(self, near: StickyWindow | None = None) -> None:
         color = PALETTES[len(self.windows) % len(PALETTES)].key

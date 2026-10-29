@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from PyQt6.QtCore import QTimer, QPointF, Qt
+from PyQt6.QtCore import QTimer, QPointF, QRect, Qt
 from PyQt6.QtWidgets import QApplication, QMenu, QSizeGrip
 from PyQt6.QtTest import QTest
 
@@ -13,6 +13,7 @@ from stickies.app import Manager, app_icon
 from stickies.model import Note, Store, Task
 from stickies.sticky import StickyWindow
 from stickies import startup
+from stickies.docking import compact_slot
 
 APP = QApplication.instance() or QApplication([])
 
@@ -88,7 +89,7 @@ class StickiesTests(unittest.TestCase):
         self.assertLess(win.height(), 150)
         self.assertEqual(note.h, 650)
         self.assertEqual(note.w, 800)
-        self.assertEqual(win.width(), 200)
+        self.assertEqual(win.width(), 160)
         self.assertEqual(win.geometry().bottomRight(), win.screen().availableGeometry().bottomRight())
         original_position = (note.x, note.y)
         win.move(win.x() - 100, win.y() - 50)
@@ -112,7 +113,7 @@ class StickiesTests(unittest.TestCase):
         win.set_collapsed(True)
         QTest.qWait(250)
         self.assertLess(win.height(), 150)
-        self.assertEqual(win.width(), 200)
+        self.assertEqual(win.width(), 160)
         win.set_collapsed(False)
         QTest.qWait(250)
         self.assertEqual(win.size(), original)
@@ -145,6 +146,35 @@ class StickiesTests(unittest.TestCase):
         self.assertEqual(win.pos(), expanded_position)
         win.set_collapsed(True, animate=False)
         self.assertEqual(win.geometry().bottomRight(), win.screen().availableGeometry().bottomRight())
+
+    def test_tab_slots_wrap_without_overlapping(self):
+        area = QRect(-640, 30, 640, 400)
+        slots = []
+        for _ in range(6):
+            slot = compact_slot(area, slots)
+            self.assertTrue(area.contains(slot))
+            self.assertFalse(any(slot.intersects(old) for old in slots))
+            slots.append(slot)
+        self.assertEqual(slots[0].bottom(), area.bottom())
+        self.assertEqual(slots[1].right() + 1, slots[0].left())
+        self.assertEqual(slots[4].bottom() + 1, slots[0].top())
+
+    def test_manager_reserves_tabs_during_simultaneous_animation(self):
+        self.store.save([Note.new() for _ in range(3)])
+        with patch('stickies.app.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):
+            manager = Manager(self.store)
+        wins = list(manager.windows.values())
+        self.windows.extend(wins)
+        for win in wins:
+            win.set_collapsed(True)
+        QTest.qWait(250)
+        for index, win in enumerate(wins):
+            self.assertEqual(win.height(), 32)
+            self.assertEqual(win.card.geometry().bottom(), win.height() - 1)
+            self.assertEqual(win.geometry().bottom(), win.screen().availableGeometry().bottom())
+            for other in wins[:index]:
+                self.assertFalse(win.geometry().intersects(other.geometry()))
+        manager.save_timer.stop()
 
     def test_tray_menu_targets_and_refreshes_titles(self):
         with patch('stickies.app.QSystemTrayIcon.isSystemTrayAvailable', return_value=False):

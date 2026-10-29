@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (QCalendarWidget, QDialog, QFrame,
                              QWidget)
 
 from .model import Note, Task
+from .docking import COMPACT_WIDTH, COMPACT_HEIGHT, compact_slot
 from .theme import BY_KEY, INK, INK_SECONDARY, IOS_ORANGE, IOS_RED, PALETTES
 from .widgets import GrowingTextEdit, IconButton, TaskRow, repolish
 
@@ -104,6 +105,8 @@ class StickyWindow(QWidget):
         super().__init__(None, flags)
         self.note = note
         self.rows: list[TaskRow] = []
+        self.compact_target_provider = None
+        self._dock_target = None
         self._animating = False
         self._expanded_height = note.h
         self._expanded_width = note.w
@@ -157,6 +160,7 @@ class StickyWindow(QWidget):
     # ---------- построение интерфейса ----------
     def _build(self) -> None:
         root = QVBoxLayout(self)
+        self.root_layout = root
         root.setContentsMargins(MARGIN, MARGIN, MARGIN, MARGIN)
 
         self.card = QFrame()
@@ -169,6 +173,7 @@ class StickyWindow(QWidget):
         root.addWidget(self.card)
 
         lay = QVBoxLayout(self.card)
+        self.card_layout = lay
         lay.setContentsMargins(16, 6, 16, 12)
         lay.setSpacing(6)
 
@@ -184,7 +189,7 @@ class StickyWindow(QWidget):
         self.collapsed_title.setToolTip(self.note.title or "Стикер")
         self.collapsed_title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         compact_layout.addWidget(self.collapsed_title, 1)
-        self.compact_menu_btn = IconButton("dots", "Управление стикером")
+        self.compact_menu_btn = IconButton("dots", "Управление стикером", size=24)
         self.compact_menu_btn.clicked.connect(self._show_compact_menu)
         compact_layout.addWidget(self.compact_menu_btn)
         self.compact_header.setVisible(False)
@@ -281,7 +286,9 @@ class StickyWindow(QWidget):
     def _qss(self) -> str:
         pal = BY_KEY.get(self.note.color, PALETTES[0])
         return f"""
-        #card {{ background: {pal.bg}; border-radius: 18px;
+        #card {{ background: {pal.bg}; border-radius: {0 if self.note.collapsed else 18}px;
+                 border-top-left-radius: {8 if self.note.collapsed else 18}px;
+                 border-top-right-radius: {8 if self.note.collapsed else 18}px;
                  border: 1px solid rgba(0, 0, 0, 6%); }}
         QPushButton {{ background: transparent; border: none; }}
         QPushButton:hover {{ background: rgba(255,255,255,70%); border-radius: 6px; }}
@@ -435,12 +442,17 @@ class StickyWindow(QWidget):
         self.body.setVisible(not collapsed)
         self.compact_header.setVisible(collapsed)
         self.header.setVisible(not collapsed)
+        self._apply_color()
         self.collapse_btn.set_kind("expand" if collapsed else "collapse")
         self.collapse_btn.setToolTip((self.note.title or "Стикер") + " — развернуть" if collapsed else "Свернуть до шапки")
-        self.setMinimumSize(200 if collapsed else 300, 74 if collapsed else 230)
+        self.root_layout.setContentsMargins(*( (0, 0, 0, 0) if collapsed else (MARGIN,) * 4))
+        self.card_layout.setContentsMargins(*( (10, 4, 6, 4) if collapsed else (16, 6, 16, 12)))
+        self.card.graphicsEffect().setEnabled(not collapsed)
+        self.setMinimumSize(COMPACT_WIDTH if collapsed else 300, COMPACT_HEIGHT if collapsed else 230)
         if collapsed:
             area = self.screen().availableGeometry()
-            target = QRect(area.right() - 200 + 1, area.bottom() - 74 + 1, 200, 74)
+            target = self.compact_target_provider() if self.compact_target_provider else compact_slot(area)
+            self._dock_target = QRect(target)
         else:
             target = QRect(self._expanded_position, QSize(self._expanded_width, self._expanded_height))
         if animate and self.isVisible():
